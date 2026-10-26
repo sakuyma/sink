@@ -1,0 +1,12 @@
+/target/
+/result
+/result-*
+/pkg/
+/src/sink/
+/src/*.tar.*
+*.pkg.tar.*
+*.tar.gz
+*.tar.xz
+!Cargo.lock
+.*.swp
+.DS_Store

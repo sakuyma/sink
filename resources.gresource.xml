@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/dev/saku/Sink/icons">
+    <file>scalable/actions/sink-check-symbolic.svg</file>
+    <file>scalable/actions/sink-home-symbolic.svg</file>
+    <file>scalable/actions/sink-radio-checked-symbolic.svg</file>
+    <file>scalable/actions/sink-radio-symbolic.svg</file>
+    <file>scalable/actions/sink-route-symbolic.svg</file>
+    <file>scalable/apps/sink.svg</file>
+    <file>scalable/devices/sink-display-symbolic.svg</file>
+    <file>scalable/devices/sink-headphones-symbolic.svg</file>
+    <file>scalable/devices/sink-mic-symbolic.svg</file>
+    <file>scalable/devices/sink-speaker-symbolic.svg</file>
+    <file>scalable/devices/sink-webcam-symbolic.svg</file>
+    <file>scalable/mimetypes/sink-app-symbolic.svg</file>
+    <file>scalable/status/sink-volume-high-symbolic.svg</file>
+    <file>scalable/status/sink-volume-low-symbolic.svg</file>
+    <file>scalable/status/sink-volume-medium-symbolic.svg</file>
+    <file>scalable/status/sink-volume-muted-symbolic.svg</file>
+  </gresource>
+</gresources>

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sink
+Comment=PipeWire audio control panel
+Exec=sink
+Icon=sink
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=audio;volume;pipewire;wayland;
+StartupNotify=true
+StartupWMClass=dev.saku.Sink
