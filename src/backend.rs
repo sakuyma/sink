@@ -1035,6 +1035,9 @@ fn parse_route(pod: &Pod) -> Option<RouteEntry> {
 }
 
 fn props_pod(volumes: &[f32], muted: bool) -> Option<Vec<u8>> {
+    // Match WirePlumber's node props: the effective channel volumes and mute.
+    // Soft volumes/soft mute belong to the hardware/software split and are left
+    // for the session manager (and the device route) to manage.
     let value = Value::Object(Object {
         type_: spa::sys::SPA_TYPE_OBJECT_Props,
         id: ParamType::Props.as_raw(),
@@ -1045,17 +1048,7 @@ fn props_pod(volumes: &[f32], muted: bool) -> Option<Vec<u8>> {
                 value: Value::ValueArray(ValueArray::Float(volumes.to_vec())),
             },
             Property {
-                key: spa::sys::SPA_PROP_softVolumes,
-                flags: PropertyFlags::empty(),
-                value: Value::ValueArray(ValueArray::Float(volumes.to_vec())),
-            },
-            Property {
                 key: spa::sys::SPA_PROP_mute,
-                flags: PropertyFlags::empty(),
-                value: Value::Bool(muted),
-            },
-            Property {
-                key: spa::sys::SPA_PROP_softMute,
                 flags: PropertyFlags::empty(),
                 value: Value::Bool(muted),
             },
@@ -1293,6 +1286,71 @@ mod tests {
             original_muted,
             "mute was not restored"
         );
+
+        if let Some(app) = latest.apps.first() {
+            let original_app_volume = wpctl_volume(app.id);
+            let original_app_muted = wpctl_muted(app.id);
+            let app_target = if (original_app_volume - 25.0).abs() < 5.0 {
+                75.0
+            } else {
+                25.0
+            };
+
+            action_tx
+                .send(Action::SetVolume {
+                    id: app.id,
+                    percent: app_target,
+                })
+                .expect("set app volume");
+            wait_for(&rx, |snapshot| {
+                snapshot.apps.iter().any(|candidate| {
+                    candidate.id == app.id && (candidate.volume - app_target).abs() < 1.0
+                })
+            });
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                (wpctl_volume(app.id) - app_target).abs() < 0.7,
+                "app volume write did not reach PipeWire"
+            );
+
+            action_tx
+                .send(Action::SetMute {
+                    id: app.id,
+                    muted: !original_app_muted,
+                })
+                .expect("set app mute");
+            wait_for(&rx, |snapshot| {
+                snapshot.apps.iter().any(|candidate| {
+                    candidate.id == app.id && candidate.muted == !original_app_muted
+                })
+            });
+            std::thread::sleep(Duration::from_millis(250));
+            assert_eq!(wpctl_muted(app.id), !original_app_muted);
+
+            action_tx
+                .send(Action::SetMute {
+                    id: app.id,
+                    muted: original_app_muted,
+                })
+                .expect("restore app mute");
+            action_tx
+                .send(Action::SetVolume {
+                    id: app.id,
+                    percent: original_app_volume,
+                })
+                .expect("restore app volume");
+            wait_for(&rx, |snapshot| {
+                snapshot.apps.iter().any(|candidate| {
+                    candidate.id == app.id && (candidate.volume - original_app_volume).abs() < 1.0
+                })
+            });
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                (wpctl_volume(app.id) - original_app_volume).abs() < 0.7,
+                "app volume was not restored"
+            );
+            assert_eq!(wpctl_muted(app.id), original_app_muted);
+        }
 
         if let Some(default) = latest.sinks.iter().find(|sink| sink.is_default) {
             action_tx
