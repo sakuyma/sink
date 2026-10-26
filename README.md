@@ -59,16 +59,16 @@ If `~/.local/bin` is not in your `PATH`, use `/usr/local/bin` instead.
 
 ## Arch Linux
 
-The included `PKGBUILD` builds from the local git checkout, which keeps builds
-from a private repository credential-free. Commit your changes before running:
+The included `PKGBUILD` builds from the local git checkout. Commit your
+changes before running:
 
 ```sh
 makepkg -si
 ```
 
 `makepkg` clones `HEAD` from `$startdir`; uncommitted files are not included. To
-package a public release instead, replace the source line in `PKGBUILD` with the
-GitHub release archive for the tag.
+build from a tagged GitHub archive instead, replace the source line in
+`PKGBUILD` with the archive URL and checksum.
 
 ## Nix
 

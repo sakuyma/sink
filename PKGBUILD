@@ -1,11 +1,10 @@
 # Maintainer: sakuyma <201369162+sakuyma@users.noreply.github.com>
 #
-# This PKGBUILD builds from the local git checkout. That is intentional: the
-# upstream repository is private, so a public tarball URL would require
-# credentials for every build. Commit before running makepkg; it packages HEAD,
-# not the working tree.
+# This PKGBUILD builds from the local git checkout. Commit before running
+# makepkg; it packages HEAD, not the working tree.
 #
-# For a public release, replace the source below with, for example:
+# To build from a tagged GitHub archive instead, replace the source below with,
+# for example:
 #   source=("$pkgname-$pkgver.tar.gz::https://github.com/sakuyma/sink/archive/refs/tags/v$pkgver.tar.gz")
 # and replace sha256sums with the archive's checksum.
 
