@@ -20,6 +20,8 @@ depends=('gtk4' 'pipewire' 'wireplumber')
 makedepends=('cargo' 'rust' 'pkgconf' 'clang' 'glib2' 'git')
 source=("git+file://$startdir")
 sha256sums=('SKIP')
+# Cargo's release profile already strips the binary; no separate debug split.
+options=(!strip !debug)
 
 build() {
   cd "$srcdir/$pkgname"

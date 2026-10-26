@@ -316,12 +316,17 @@ impl Ui {
         {
             let mut sinks = self.sinks.borrow_mut();
             sinks.clear();
-            sinks.extend(
-                snapshot
-                    .sinks
-                    .iter()
-                    .map(|device| (device.id, device.title.clone(), device.icon.clone())),
-            );
+            let mut sorted: Vec<(u32, String, String)> = snapshot
+                .sinks
+                .iter()
+                .map(|device| (device.id, device.title.clone(), device.icon.clone()))
+                .collect();
+            sorted.sort_by(|a, b| {
+                a.1.to_lowercase()
+                    .cmp(&b.1.to_lowercase())
+                    .then(a.0.cmp(&b.0))
+            });
+            sinks.extend(sorted);
         }
         let sink_names: HashMap<u32, String> = snapshot
             .sinks

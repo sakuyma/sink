@@ -18,7 +18,7 @@ mixer controls most people use every day.
 - Event-driven updates: external volume, mute and route changes appear without a
   refresh loop.
 - Volume is cubic like WirePlumber and capped at 100%.
-- Stable alphabetical ordering, with the default device pinned by a check mark.
+- Stable alphabetical ordering, with the default device marked by a check mark.
 - Bundled symbolic fallback icons, so a missing or broken icon theme does not
   turn the window into a grid of missing-image placeholders.
 
@@ -83,7 +83,8 @@ or run it without installing:
 nix run
 ```
 
-If `flake.lock` is absent in your checkout, Nix creates it on the first build.
+The lock file pins nixpkgs. Refresh it with `nix flake update` after changing
+inputs or when you want a newer nixpkgs.
 
 ## How it works
 
