@@ -663,14 +663,14 @@ impl State {
                             route.device == card_device
                                 && route
                                     .direction
-                                    .is_none_or(|candidate| candidate == direction)
+                                    .map_or(true, |candidate| candidate == direction)
                         })
                     })
                     .or_else(|| {
                         device.routes.values().find(|route| {
                             route
                                 .direction
-                                .is_none_or(|candidate| candidate == direction)
+                                .map_or(true, |candidate| candidate == direction)
                         })
                     });
                 if let Some(route) = route {
