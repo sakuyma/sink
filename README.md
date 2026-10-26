@@ -9,8 +9,9 @@ mixer controls most people use every day.
 
 ## Features
 
-- Separate Outputs, Applications and Inputs windows, reachable from the View
-  menu or with `Ctrl+1`, `Ctrl+2` and `Ctrl+3`.
+- One window with permanent Outputs, Applications and Inputs tabs. Each tab
+  keeps its list, filter and scroll state when you switch away.
+- Jump between tabs with `Ctrl+1`, `Ctrl+2` and `Ctrl+3`.
 - Search active playback streams with `Ctrl+F`.
 - Switch the default output and input.
 - Per-device volume and mute.
