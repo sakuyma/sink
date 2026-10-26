@@ -21,33 +21,106 @@ const CSS: &str = r#"
     letter-spacing: 0.09em;
     opacity: 0.55;
 }
+.view-subtitle {
+    font-size: 0.78rem;
+    opacity: 0.65;
+}
 .dim { opacity: 0.62; }
 .small { font-size: 0.85rem; }
 .numeric { font-feature-settings: "tnum"; }
 .route-item { padding: 5px 9px; }
 "#;
 
+#[derive(Clone, Copy)]
+enum PageKind {
+    Outputs,
+    Applications,
+    Inputs,
+}
+
+type SinkChoices = Rc<RefCell<Vec<(u32, String, String)>>>;
+
 pub struct Ui {
-    window: gtk::ApplicationWindow,
-    sink_list: gtk::ListBox,
-    source_list: gtk::ListBox,
-    app_list: gtk::ListBox,
-    sink_empty: gtk::Label,
-    source_empty: gtk::Label,
-    app_section: gtk::Box,
-    sections: gtk::Box,
-    status: gtk::Box,
-    status_label: gtk::Label,
-    retry: gtk::Button,
+    output: Page,
+    apps: Page,
+    inputs: Page,
     sink_rows: HashMap<u32, DeviceRow>,
     source_rows: HashMap<u32, DeviceRow>,
     app_rows: HashMap<u32, AppRow>,
     sink_order: Rc<RefCell<Vec<u32>>>,
     source_order: Rc<RefCell<Vec<u32>>>,
     app_order: Rc<RefCell<Vec<u32>>>,
-    sinks: Rc<RefCell<Vec<(u32, String, String)>>>,
+    sinks: SinkChoices,
     action_tx: Rc<RefCell<Option<ActionSender>>>,
     ready: bool,
+}
+
+#[derive(Clone)]
+struct Page {
+    window: gtk::ApplicationWindow,
+    header: gtk::HeaderBar,
+    view_label: gtk::Label,
+    stack: gtk::Stack,
+    list: gtk::ListBox,
+    empty: gtk::Label,
+    no_matches: Option<gtk::Label>,
+    search: Option<gtk::SearchEntry>,
+    status_label: gtk::Label,
+    retry: gtk::Button,
+}
+
+impl Page {
+    fn show_connecting(&self) {
+        self.status_label.set_text("Connecting to PipeWire…");
+        self.retry.set_visible(false);
+        self.stack.set_visible_child_name("status");
+    }
+
+    fn show_error(&self, message: &str) {
+        self.status_label.set_text(message);
+        self.retry.set_visible(true);
+        self.stack.set_visible_child_name("status");
+    }
+
+    fn show_content(&self) {
+        self.stack.set_visible_child_name("content");
+    }
+
+    fn focus_search(&self) {
+        if let Some(search) = &self.search {
+            search.grab_focus();
+        }
+    }
+
+    fn refresh_search(&self) {
+        let Some(search) = &self.search else {
+            return;
+        };
+        let query = search.text().trim().to_lowercase();
+        let has_rows = self.list.first_child().is_some();
+        self.empty.set_visible(!has_rows);
+
+        let Some(no_matches) = &self.no_matches else {
+            return;
+        };
+        if query.is_empty() {
+            no_matches.set_visible(false);
+            return;
+        }
+
+        let mut any_match = false;
+        let mut child = self.list.first_child();
+        while let Some(widget) = child {
+            if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
+                if row_tooltip_contains(&row, &query) {
+                    any_match = true;
+                    break;
+                }
+            }
+            child = widget.next_sibling();
+        }
+        no_matches.set_visible(has_rows && !any_match);
+    }
 }
 
 struct DeviceRow {
@@ -84,12 +157,6 @@ struct VolumeControl {
     muted: Rc<Cell<bool>>,
 }
 
-struct Section {
-    container: gtk::Box,
-    list: gtk::ListBox,
-    empty: gtk::Label,
-}
-
 pub fn load_css() {
     register_resources();
 
@@ -116,28 +183,148 @@ fn register_resources() {
 pub fn create(app: &gtk::Application) -> Rc<RefCell<Ui>> {
     gtk::Window::set_default_icon_name("sink");
 
+    let output = build_page(
+        app,
+        "Outputs",
+        "Click a device to make it the system default. Volume and mute apply to the device.",
+        "No output devices",
+        None,
+        540,
+        380,
+    );
+    let apps = build_page(
+        app,
+        "Applications",
+        "Adjust active playback streams or move them to another output.",
+        "No active playback streams",
+        Some("Search applications"),
+        640,
+        520,
+    );
+    let inputs = build_page(
+        app,
+        "Inputs",
+        "Click a device to make it the system default. Volume and mute apply to the device.",
+        "No input devices",
+        None,
+        540,
+        380,
+    );
+
+    let ui = Ui {
+        output,
+        apps,
+        inputs,
+        sink_rows: HashMap::new(),
+        source_rows: HashMap::new(),
+        app_rows: HashMap::new(),
+        sink_order: Rc::new(RefCell::new(Vec::new())),
+        source_order: Rc::new(RefCell::new(Vec::new())),
+        app_order: Rc::new(RefCell::new(Vec::new())),
+        sinks: Rc::new(RefCell::new(Vec::new())),
+        action_tx: Rc::new(RefCell::new(None)),
+        ready: false,
+    };
+    let ui = Rc::new(RefCell::new(ui));
+
+    wire_row_activation(&ui);
+    wire_retry(&ui);
+    wire_close_requests(app, &ui);
+    add_app_actions(app, &ui);
+    install_menu(&ui);
+
+    ui.borrow().output.window.present();
+    start_backend(&ui);
+    ui
+}
+
+fn build_page(
+    app: &gtk::Application,
+    section: &str,
+    description: &str,
+    empty_text: &str,
+    search_placeholder: Option<&str>,
+    width: i32,
+    height: i32,
+) -> Page {
     let window = gtk::ApplicationWindow::builder()
         .application(app)
-        .title("Sink")
-        .default_width(460)
-        .default_height(560)
+        .title(format!("Sink — {section}"))
+        .default_width(width)
+        .default_height(height)
         .build();
-    window.set_size_request(400, 280);
+    window.set_size_request(430, 280);
+    window.set_hide_on_close(true);
 
     let header = gtk::HeaderBar::new();
-    let header_title = gtk::Label::new(Some("Sink"));
-    header_title.add_css_class("title");
-    header.set_title_widget(Some(&header_title));
+    let title_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    title_box.set_halign(gtk::Align::Center);
+    let app_title = gtk::Label::new(Some("Sink"));
+    app_title.add_css_class("title");
+    let view_label = gtk::Label::new(Some(section));
+    view_label.add_css_class("view-subtitle");
+    title_box.append(&app_title);
+    title_box.append(&view_label);
+    header.set_title_widget(Some(&title_box));
     window.set_titlebar(Some(&header));
 
-    let outputs = make_section("OUTPUTS", "No output devices");
-    let apps = make_section("APPS", "");
-    let inputs = make_section("INPUTS", "No input devices");
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.set_show_separators(true);
+    list.set_activate_on_single_click(true);
 
-    let sections = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    sections.append(&outputs.container);
-    sections.append(&apps.container);
-    sections.append(&inputs.container);
+    let empty = gtk::Label::new(Some(empty_text));
+    empty.add_css_class("dim");
+    empty.set_xalign(0.0);
+    empty.set_visible(false);
+
+    let description = gtk::Label::new(Some(description));
+    description.add_css_class("dim");
+    description.add_css_class("small");
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    content.set_margin_top(12);
+    content.set_margin_bottom(18);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    content.append(&description);
+
+    let mut search = None;
+    let mut no_matches = None;
+    let query = Rc::new(RefCell::new(String::new()));
+
+    if let Some(placeholder) = search_placeholder {
+        let entry = gtk::SearchEntry::new();
+        entry.set_placeholder_text(Some(placeholder));
+        entry.set_hexpand(true);
+        entry.set_tooltip_text(Some("Filter this list"));
+        content.append(&entry);
+        search = Some(entry);
+
+        let label = gtk::Label::new(Some("No matching applications"));
+        label.add_css_class("dim");
+        label.set_xalign(0.0);
+        label.set_visible(false);
+        no_matches = Some(label);
+
+        let filter_query = query.clone();
+        list.set_filter_func(move |row| {
+            let filter_query = filter_query.borrow();
+            if filter_query.is_empty() {
+                true
+            } else {
+                row_tooltip_contains(row, &filter_query)
+            }
+        });
+    }
+
+    content.append(&list);
+    content.append(&empty);
+    if let Some(label) = &no_matches {
+        content.append(label);
+    }
 
     let status_label = gtk::Label::new(Some("Connecting to PipeWire…"));
     status_label.set_wrap(true);
@@ -152,55 +339,54 @@ pub fn create(app: &gtk::Application) -> Rc<RefCell<Ui>> {
     let status = gtk::Box::new(gtk::Orientation::Vertical, 10);
     status.set_valign(gtk::Align::Center);
     status.set_halign(gtk::Align::Center);
-    status.set_vexpand(true);
     status.append(&status_label);
     status.append(&retry);
-
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
-    content.set_margin_top(12);
-    content.set_margin_bottom(18);
-    content.set_margin_start(12);
-    content.set_margin_end(12);
-    content.append(&status);
-    content.append(&sections);
-    sections.set_visible(false);
 
     let scrolled = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .vexpand(true)
         .child(&content)
         .build();
-    window.set_child(Some(&scrolled));
 
-    let ui = Ui {
+    let stack = gtk::Stack::new();
+    stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+    stack.set_transition_duration(120);
+    stack.add_named(&status, Some("status"));
+    stack.add_named(&scrolled, Some("content"));
+    stack.set_visible_child_name("status");
+    window.set_child(Some(&stack));
+
+    let page = Page {
         window,
-        sink_list: outputs.list,
-        source_list: inputs.list,
-        app_list: apps.list,
-        sink_empty: outputs.empty,
-        source_empty: inputs.empty,
-        app_section: apps.container,
-        sections,
-        status,
+        header,
+        view_label,
+        stack,
+        list,
+        empty,
+        no_matches,
+        search,
         status_label,
         retry,
-        sink_rows: HashMap::new(),
-        source_rows: HashMap::new(),
-        app_rows: HashMap::new(),
-        sink_order: Rc::new(RefCell::new(Vec::new())),
-        source_order: Rc::new(RefCell::new(Vec::new())),
-        app_order: Rc::new(RefCell::new(Vec::new())),
-        sinks: Rc::new(RefCell::new(Vec::new())),
-        action_tx: Rc::new(RefCell::new(None)),
-        ready: false,
     };
-    let ui = Rc::new(RefCell::new(ui));
 
+    if let Some(entry) = &page.search {
+        let page = page.clone();
+        let query = query.clone();
+        entry.connect_search_changed(move |entry| {
+            *query.borrow_mut() = entry.text().trim().to_lowercase();
+            page.list.invalidate_filter();
+            page.refresh_search();
+        });
+    }
+
+    page
+}
+
+fn wire_row_activation(ui: &Rc<RefCell<Ui>>) {
     {
         let order = ui.borrow().sink_order.clone();
         let action_tx = ui.borrow().action_tx.clone();
-        let list = ui.borrow().sink_list.clone();
+        let list = ui.borrow().output.list.clone();
         list.connect_row_activated(move |_, row| {
             let index = row.index();
             if index < 0 {
@@ -214,7 +400,7 @@ pub fn create(app: &gtk::Application) -> Rc<RefCell<Ui>> {
     {
         let order = ui.borrow().source_order.clone();
         let action_tx = ui.borrow().action_tx.clone();
-        let list = ui.borrow().source_list.clone();
+        let list = ui.borrow().inputs.list.clone();
         list.connect_row_activated(move |_, row| {
             let index = row.index();
             if index < 0 {
@@ -225,29 +411,144 @@ pub fn create(app: &gtk::Application) -> Rc<RefCell<Ui>> {
             }
         });
     }
-    {
-        let weak = Rc::downgrade(&ui);
-        let retry = ui.borrow().retry.clone();
+}
+
+fn wire_retry(ui: &Rc<RefCell<Ui>>) {
+    let buttons = [
+        ui.borrow().output.retry.clone(),
+        ui.borrow().apps.retry.clone(),
+        ui.borrow().inputs.retry.clone(),
+    ];
+    for retry in buttons {
+        let weak = Rc::downgrade(ui);
         retry.connect_clicked(move |_| {
             if let Some(ui) = weak.upgrade() {
                 start_backend(&ui);
             }
         });
     }
+}
 
-    ui.borrow().window.present();
-    start_backend(&ui);
-    ui
+fn wire_close_requests(app: &gtk::Application, ui: &Rc<RefCell<Ui>>) {
+    let windows = [
+        ui.borrow().output.window.clone(),
+        ui.borrow().apps.window.clone(),
+        ui.borrow().inputs.window.clone(),
+    ];
+    for window in windows {
+        let app = app.clone();
+        window.connect_close_request(move |_| {
+            let app = app.clone();
+            glib::idle_add_local_once(move || {
+                if !app.windows().iter().any(|window| window.is_visible()) {
+                    app.quit();
+                }
+            });
+            glib::Propagation::Proceed
+        });
+    }
+}
+
+fn add_app_actions(app: &gtk::Application, ui: &Rc<RefCell<Ui>>) {
+    for (name, kind) in [
+        ("show-outputs", PageKind::Outputs),
+        ("show-apps", PageKind::Applications),
+        ("show-inputs", PageKind::Inputs),
+    ] {
+        let action = gtk::gio::SimpleAction::new(name, None);
+        let weak = Rc::downgrade(ui);
+        action.connect_activate(move |_, _| {
+            if let Some(ui) = weak.upgrade() {
+                ui.borrow().present(kind);
+            }
+        });
+        app.add_action(&action);
+    }
+    app.set_accels_for_action("app.show-outputs", &["<Primary>1"]);
+    app.set_accels_for_action("app.show-apps", &["<Primary>2"]);
+    app.set_accels_for_action("app.show-inputs", &["<Primary>3"]);
+
+    let search = gtk::gio::SimpleAction::new("search", None);
+    let weak = Rc::downgrade(ui);
+    search.connect_activate(move |_, _| {
+        if let Some(ui) = weak.upgrade() {
+            ui.borrow().search_apps();
+        }
+    });
+    app.add_action(&search);
+    app.set_accels_for_action("app.search", &["<Primary>f"]);
+
+    let about = gtk::gio::SimpleAction::new("about", None);
+    let app_for_about = app.clone();
+    about.connect_activate(move |_, _| show_about(&app_for_about));
+    app.add_action(&about);
+    app.set_accels_for_action("app.about", &["F1"]);
+
+    let quit = gtk::gio::SimpleAction::new("quit-sink", None);
+    let app_for_quit = app.clone();
+    quit.connect_activate(move |_, _| app_for_quit.quit());
+    app.add_action(&quit);
+    app.set_accels_for_action("app.quit-sink", &["<Primary>q"]);
+}
+
+fn install_menu(ui: &Rc<RefCell<Ui>>) {
+    let menu = gtk::gio::Menu::new();
+
+    let view = gtk::gio::Menu::new();
+    view.append(Some("Outputs"), Some("app.show-outputs"));
+    view.append(Some("Applications"), Some("app.show-apps"));
+    view.append(Some("Inputs"), Some("app.show-inputs"));
+    view.append(Some("Search Applications"), Some("app.search"));
+    menu.append_section(Some("View"), &view);
+
+    let application = gtk::gio::Menu::new();
+    application.append(Some("About Sink"), Some("app.about"));
+    application.append(Some("Quit"), Some("app.quit-sink"));
+    menu.append_section(None, &application);
+
+    let headers = [
+        ui.borrow().output.header.clone(),
+        ui.borrow().apps.header.clone(),
+        ui.borrow().inputs.header.clone(),
+    ];
+    for header in headers {
+        let image = gtk::Image::from_icon_name("sink-menu-symbolic");
+        image.set_pixel_size(16);
+        let button = gtk::MenuButton::builder().child(&image).build();
+        button.set_tooltip_text(Some("View menu"));
+        button.set_has_frame(false);
+        button.set_menu_model(Some(&menu));
+        header.pack_end(&button);
+    }
+}
+
+fn show_about(app: &gtk::Application) {
+    let dialog = gtk::AboutDialog::builder()
+        .program_name("Sink")
+        .version(env!("CARGO_PKG_VERSION"))
+        .comments("A native PipeWire audio control panel for Wayland.")
+        .website("https://github.com/sakuyma/sink")
+        .website_label("Project homepage")
+        .logo_icon_name("sink")
+        .license_type(gtk::License::MitX11)
+        .build();
+    if let Some(window) = app.active_window() {
+        dialog.set_transient_for(Some(&window));
+        dialog.set_modal(true);
+    }
+    dialog.present();
 }
 
 fn start_backend(ui: &Rc<RefCell<Ui>>) {
     {
         let mut ui = ui.borrow_mut();
         ui.ready = false;
-        ui.sections.set_visible(false);
-        ui.status.set_visible(true);
-        ui.status_label.set_text("Connecting to PipeWire…");
-        ui.retry.set_visible(false);
+        ui.output.view_label.set_text("Outputs");
+        ui.apps.view_label.set_text("Applications");
+        ui.inputs.view_label.set_text("Inputs");
+        ui.output.show_connecting();
+        ui.apps.show_connecting();
+        ui.inputs.show_connecting();
     }
 
     let (action_tx, snapshots) = backend::start();
@@ -266,41 +567,34 @@ fn start_backend(ui: &Rc<RefCell<Ui>>) {
     });
 }
 
-fn make_section(title: &str, empty_text: &str) -> Section {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    let heading = gtk::Label::new(Some(title));
-    heading.add_css_class("section-title");
-    heading.set_xalign(0.0);
-
-    let list = gtk::ListBox::new();
-    list.set_selection_mode(gtk::SelectionMode::None);
-    list.set_show_separators(true);
-    list.set_activate_on_single_click(true);
-
-    let empty = gtk::Label::new(Some(empty_text));
-    empty.add_css_class("dim");
-    empty.set_xalign(0.0);
-    empty.set_visible(false);
-
-    container.append(&heading);
-    container.append(&list);
-    container.append(&empty);
-
-    Section {
-        container,
-        list,
-        empty,
-    }
-}
-
 impl Ui {
+    fn present(&self, kind: PageKind) {
+        let page = match kind {
+            PageKind::Outputs => &self.output,
+            PageKind::Applications => &self.apps,
+            PageKind::Inputs => &self.inputs,
+        };
+        page.window.present();
+    }
+
+    fn search_apps(&self) {
+        self.apps.window.present();
+        self.apps.focus_search();
+    }
+
+    fn set_error(&mut self, error: &str) {
+        self.ready = false;
+        self.output.view_label.set_text("Outputs");
+        self.apps.view_label.set_text("Applications");
+        self.inputs.view_label.set_text("Inputs");
+        self.output.show_error(error);
+        self.apps.show_error(error);
+        self.inputs.show_error(error);
+    }
+
     fn apply_snapshot(&mut self, snapshot: Snapshot) {
         if let Some(error) = snapshot.error {
-            self.ready = false;
-            self.sections.set_visible(false);
-            self.status.set_visible(true);
-            self.status_label.set_text(&error);
-            self.retry.set_visible(true);
+            self.set_error(&error);
             return;
         }
         if !snapshot.ready {
@@ -308,8 +602,9 @@ impl Ui {
         }
         if !self.ready {
             self.ready = true;
-            self.status.set_visible(false);
-            self.sections.set_visible(true);
+            self.output.show_content();
+            self.apps.show_content();
+            self.inputs.show_content();
         }
 
         // Snapshot data shared with app route popovers.
@@ -335,7 +630,7 @@ impl Ui {
             .collect();
 
         sync_devices(
-            &self.sink_list,
+            &self.output.list,
             &mut self.sink_rows,
             &self.sink_order,
             &snapshot.sinks,
@@ -343,7 +638,7 @@ impl Ui {
             false,
         );
         sync_devices(
-            &self.source_list,
+            &self.inputs.list,
             &mut self.source_rows,
             &self.source_order,
             &snapshot.sources,
@@ -351,7 +646,7 @@ impl Ui {
             true,
         );
         sync_apps(
-            &self.app_list,
+            &self.apps.list,
             &mut self.app_rows,
             &self.app_order,
             &snapshot.apps,
@@ -360,9 +655,20 @@ impl Ui {
             &self.action_tx,
         );
 
-        self.sink_empty.set_visible(snapshot.sinks.is_empty());
-        self.source_empty.set_visible(snapshot.sources.is_empty());
-        self.app_section.set_visible(!snapshot.apps.is_empty());
+        self.output.empty.set_visible(snapshot.sinks.is_empty());
+        self.inputs.empty.set_visible(snapshot.sources.is_empty());
+        self.apps.list.invalidate_filter();
+        self.apps.refresh_search();
+
+        self.output
+            .view_label
+            .set_text(&format!("Outputs · {}", snapshot.sinks.len()));
+        self.apps
+            .view_label
+            .set_text(&format!("Applications · {}", snapshot.apps.len()));
+        self.inputs
+            .view_label
+            .set_text(&format!("Inputs · {}", snapshot.sources.len()));
     }
 }
 
@@ -409,7 +715,7 @@ fn sync_apps(
     order: &Rc<RefCell<Vec<u32>>>,
     apps: &[AppInfo],
     sink_names: &HashMap<u32, String>,
-    sinks: &Rc<RefCell<Vec<(u32, String, String)>>>,
+    sinks: &SinkChoices,
     action_tx: &Rc<RefCell<Option<ActionSender>>>,
 ) {
     let mut sorted: Vec<&AppInfo> = apps.iter().collect();
@@ -525,7 +831,8 @@ impl DeviceRow {
         }));
         self.check
             .set_opacity(if device.is_default { 1.0 } else { 0.45 });
-        self.row.set_tooltip_text(Some(if device.is_default {
+
+        let status = if device.is_default {
             if self.is_source {
                 "Default input"
             } else {
@@ -533,7 +840,16 @@ impl DeviceRow {
             }
         } else {
             "Click to make default"
-        }));
+        };
+        let mut tooltip = device.title.clone();
+        if !device.subtitle.is_empty() {
+            tooltip.push_str(" — ");
+            tooltip.push_str(&device.subtitle);
+        }
+        tooltip.push_str(" — ");
+        tooltip.push_str(status);
+        self.row.set_tooltip_text(Some(&tooltip));
+
         self.volume.update(device.volume, device.muted);
     }
 }
@@ -542,7 +858,7 @@ impl AppRow {
     fn new(
         app: &AppInfo,
         sink_names: &HashMap<u32, String>,
-        sinks: Rc<RefCell<Vec<(u32, String, String)>>>,
+        sinks: SinkChoices,
         action_tx: Rc<RefCell<Option<ActionSender>>>,
     ) -> Self {
         let row = gtk::ListBoxRow::new();
@@ -647,11 +963,18 @@ impl AppRow {
         self.icon.set_icon_name(Some(&app_icon(&app.icon)));
         self.route_state.follow.set(app.follow_default);
         self.route_state.sink.set(app.sink_id);
-        let route = match app.sink_id.and_then(|id| sink_names.get(&id)) {
-            Some(name) => format!("→ {name}"),
-            None => "→ No output".to_string(),
+        let sink = app
+            .sink_id
+            .and_then(|id| sink_names.get(&id))
+            .map_or("No output", String::as_str);
+        let route = if app.follow_default {
+            format!("Following default → {sink}")
+        } else {
+            format!("Pinned → {sink}")
         };
         self.subtitle.set_text(&route);
+        self.row
+            .set_tooltip_text(Some(&format!("{} — {route}", app.title)));
         self.volume.update(app.volume, app.muted);
     }
 }
@@ -857,6 +1180,12 @@ fn send(action_tx: &Rc<RefCell<Option<ActionSender>>>, action: Action) {
     if let Some(tx) = action_tx.borrow().as_ref() {
         let _ = tx.send(action);
     }
+}
+
+fn row_tooltip_contains(row: &gtk::ListBoxRow, query: &str) -> bool {
+    row.tooltip_text()
+        .map(|text| text.to_lowercase().contains(query))
+        .unwrap_or(false)
 }
 
 fn volume_icon(volume: f32, muted: bool) -> &'static str {

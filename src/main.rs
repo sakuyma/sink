@@ -24,6 +24,10 @@ fn main() -> glib::ExitCode {
             window.present();
             return;
         }
+        if let Some(window) = app.windows().first() {
+            window.present();
+            return;
+        }
         let ui = ui::create(app);
         *slot.borrow_mut() = Some(ui);
     });

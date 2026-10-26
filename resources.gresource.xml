@@ -3,6 +3,7 @@
   <gresource prefix="/dev/saku/Sink/icons">
     <file>scalable/actions/sink-check-symbolic.svg</file>
     <file>scalable/actions/sink-home-symbolic.svg</file>
+    <file>scalable/actions/sink-menu-symbolic.svg</file>
     <file>scalable/actions/sink-radio-checked-symbolic.svg</file>
     <file>scalable/actions/sink-radio-symbolic.svg</file>
     <file>scalable/actions/sink-route-symbolic.svg</file>

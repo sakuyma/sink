@@ -9,6 +9,9 @@ mixer controls most people use every day.
 
 ## Features
 
+- Separate Outputs, Applications and Inputs windows, reachable from the View
+  menu or with `Ctrl+1`, `Ctrl+2` and `Ctrl+3`.
+- Search active playback streams with `Ctrl+F`.
 - Switch the default output and input.
 - Per-device volume and mute.
 - Per-application volume and mute, including output streams.
@@ -21,6 +24,8 @@ mixer controls most people use every day.
 - Stable alphabetical ordering, with the default device marked by a check mark.
 - Bundled symbolic fallback icons, so a missing or broken icon theme does not
   turn the window into a grid of missing-image placeholders.
+
+Press `F1` for About and `Ctrl+Q` to quit.
 
 ## Requirements
 
